@@ -1,98 +1,177 @@
+// lib/getContext.js - Ultra-fast version
 import { createSupabaseServerClient } from './supabase-server'
 import prisma from './prisma'
 import { getOrSetSessionId } from './session'
 
-/**
- * Secure context getter with cookie-based session management
- * Returns: { user, userId, sessionId, accessToken, supabase, isAuthenticated }
- */
+// Enhanced cache with longer TTL for better performance
+const userCache = new Map()
+const CACHE_TTL = 15 * 60 * 1000 // 15 minutes
+
 export async function getContext(req, res) {
-  // 1) Ensure guest sessionId exists (HttpOnly cookie)
-  const sessionId = getOrSetSessionId(req, res)
-
-  // 2) Create server-bound Supabase client with secure cookie handling
-  const supabase = createSupabaseServerClient(req, res)
-
-  // 3) Try to get Supabase session (Supabase handles JWT verification internally)
-  let supabaseUser = null
-  let accessToken = null
+  const startTime = Date.now()
   
   try {
-    const { data: { session }, error } = await supabase.auth.getSession()
+    // 1. Always get session ID first (this is fast)
+    const sessionId = getOrSetSessionId(req, res)
+
+    // 2. Try to get auth token from cookies/headers directly (skip Supabase call)
+    const authHeader = req.headers.authorization
+    const cookieToken = req.cookies['sb-access-token'] || req.cookies['supabase-auth-token']
     
-    if (error) {
-      console.error('Supabase auth error:', error.message)
-      // Clear potentially corrupted auth cookies
-      await supabase.auth.signOut()
-    } else if (session) {
-      supabaseUser = session.user
-      accessToken = session.access_token
-      
-      // Auto-refresh token if it's close to expiring (within 5 minutes)
-      const expiresAt = session.expires_at * 1000
-      const fiveMinutes = 5 * 60 * 1000
-      
-      if (expiresAt - Date.now() < fiveMinutes) {
-        try {
-          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
-          if (refreshError) {
-            console.error('Token refresh failed:', refreshError.message)
-            await supabase.auth.signOut()
-            supabaseUser = null
-            accessToken = null
-          } else if (refreshData.session) {
-            supabaseUser = refreshData.session.user
-            accessToken = refreshData.session.access_token
-          }
-        } catch (refreshErr) {
-          console.error('Token refresh error:', refreshErr)
-          supabaseUser = null
-          accessToken = null
-        }
+    // If no auth indicators, return guest immediately
+    if (!authHeader && !cookieToken) {
+      console.log(`Fast guest context: ${Date.now() - startTime}ms`)
+      return {
+        user: null,
+        userId: null,
+        sessionId,
+        accessToken: null,
+        supabase: null, // Don't create Supabase client for guests
+        isAuthenticated: false
       }
     }
-  } catch (err) {
-    console.error('Session retrieval error:', err)
-    supabaseUser = null
-    accessToken = null
-  }
 
-  // 4) Upsert user in Prisma if authenticated (based on your Users schema)
-  let userId = null
-  if (supabaseUser) {
+    // 3. Only create Supabase client if we have auth indicators
+    const supabase = createSupabaseServerClient(req, res)
+    
+    // 4. Ultra-fast auth check with minimal timeout
+    let supabaseUser = null
+    let accessToken = null
+    
     try {
-      const upserted = await prisma.users.upsert({
-        where: { supabaseId: supabaseUser.id },
-        update: {
-          userEmail: supabaseUser.email,
-          userName: supabaseUser.user_metadata?.full_name || 
-                   supabaseUser.user_metadata?.name || 
-                   supabaseUser.email || 
-                   'User',
-          // Update timestamp handled by Prisma if you add updatedAt field
-        },
-        create: {
-          supabaseId: supabaseUser.id,
-          userEmail: supabaseUser.email,
-          userName: supabaseUser.user_metadata?.full_name || 
-                   supabaseUser.user_metadata?.name || 
-                   supabaseUser.email || 
-                   'User',
-        },
-      })
-      userId = upserted.userId
-    } catch (e) {
-      console.error('Prisma user upsert error:', e)
-      userId = null
+      // Set a very short timeout for production performance
+      const authPromise = supabase.auth.getSession()
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Auth timeout')), 300) // Only 300ms
+      )
+      
+      const { data: { session }, error } = await Promise.race([authPromise, timeoutPromise])
+      
+      if (session && !error && session.user) {
+        supabaseUser = session.user
+        accessToken = session.access_token
+      }
+    } catch (authError) {
+      // Fail fast - if auth is slow, treat as guest
+      console.log(`Auth timeout, treating as guest: ${Date.now() - startTime}ms`)
+      return {
+        user: null,
+        userId: null,
+        sessionId,
+        accessToken: null,
+        supabase,
+        isAuthenticated: false
+      }
+    }
+
+    // 5. Handle authenticated user with fast lookup
+    if (supabaseUser) {
+      const userId = await getUserIdUltraFast(supabaseUser)
+      
+      console.log(`Auth context: ${Date.now() - startTime}ms`)
+      
+      return {
+        user: supabaseUser,
+        userId,
+        sessionId,
+        accessToken,
+        supabase,
+        isAuthenticated: true
+      }
+    }
+
+    // 6. Fallback to guest
+    console.log(`Guest context: ${Date.now() - startTime}ms`)
+    return {
+      user: null,
+      userId: null,
+      sessionId,
+      accessToken: null,
+      supabase,
+      isAuthenticated: false
+    }
+    
+  } catch (error) {
+    console.error(`Context error (${Date.now() - startTime}ms):`, error.message)
+    
+    // Ultra-fast fallback
+    const sessionId = getOrSetSessionId(req, res)
+    return {
+      user: null,
+      userId: null,
+      sessionId,
+      accessToken: null,
+      supabase: null,
+      isAuthenticated: false
     }
   }
+}
 
-  return {
-    user: supabaseUser,
-    userId,
-    sessionId,
-    accessToken,
-    supabase,
-    isAuthenticated: !!supabaseUser
+/**
+ * Ultra-fast user ID lookup with aggressive caching
+ */
+async function getUserIdUltraFast(supabaseUser) {
+  const cacheKey = supabaseUser.id
+  const cached = userCache.get(cacheKey)
+  
+  // Return cached if exists (longer TTL for better performance)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.userId
+  }
+  
+  const dbStart = Date.now()
+  
+  try {
+    // Single optimized query
+    const user = await prisma.users.upsert({
+      where: { supabaseId: supabaseUser.id },
+      create: {
+        supabaseId: supabaseUser.id,
+        userEmail: supabaseUser.email || '',
+        userName: supabaseUser.email?.split('@')[0] || 'User',
+      },
+      update: {}, // Don't update anything, just get the user
+      select: { userId: true }
+    })
+    
+    console.log(`User lookup: ${Date.now() - dbStart}ms`)
+    
+    // Cache with longer TTL
+    userCache.set(cacheKey, {
+      userId: user.userId,
+      timestamp: Date.now()
+    })
+    
+    // Async cache cleanup (don't block)
+    if (userCache.size > 50) {
+      setImmediate(cleanupCache)
+    }
+    
+    return user.userId
+    
+  } catch (error) {
+    console.error('User lookup failed:', error.message)
+    
+    // Return cached even if expired on error
+    return cached?.userId || null
+  }
+}
+
+/**
+ * Async cache cleanup
+ */
+function cleanupCache() {
+  const now = Date.now()
+  let cleaned = 0
+  
+  for (const [key, value] of userCache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      userCache.delete(key)
+      cleaned++
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`Cleaned ${cleaned} expired cache entries`)
   }
 }
