@@ -1,191 +1,308 @@
-// src/pages/api/cart/index.js - Fixed version (remove disconnect)
+// src/pages/api/cart/index.js (or cart.js) - Fixed for your schema
 import { getContext } from '@/lib/getContext'
-import prisma from "@/lib/prisma"
+import prisma, { ensureConnected } from '@/lib/prisma'
 
 export default async function handler(req, res) {
   const startTime = Date.now()
+  console.log(`📥 Cart API: ${req.method} ${req.url}`)
   
   try {
-    console.log(`🛒 Cart API ${req.method} started`)
-    
-    // Use optimized context
-    const contextStart = Date.now()
-    const { userId, sessionId, isAuthenticated } = await getContext(req, res)
-    console.log(`⚡ Context: ${Date.now() - contextStart}ms`)
+    // Ensure Prisma is connected
+    const isConnected = await ensureConnected();
+    if (!isConnected) {
+      console.error('❌ Database connection failed')
+      return res.status(503).json({ 
+        error: 'Database unavailable',
+        cart: []
+      })
+    }
+    // Get context
+    const context = await getContext(req, res)
+    console.log('📦 Context received:', {
+      isAuthenticated: context.isAuthenticated,
+      userId: context.userId,
+      sessionId: context.sessionId
+    })
 
-    // Build where clause
-    const ownerWhere = userId ? { userId } : { sessionId }
-    
-    if (!userId && !sessionId) {
-      return res.status(401).json({ error: 'Authentication required' })
+    const { userId, sessionId, isAuthenticated } = context
+
+    // Ensure we have an identifier
+    if (!sessionId) {
+      console.error('❌ No sessionId available')
+      return res.status(400).json({ 
+        error: 'Session unavailable',
+        cart: []
+      })
     }
 
-    // ---------------- GET CART (OPTIMIZED) ----------------
+    // ============== GET: Fetch Cart ==============
     if (req.method === 'GET') {
-      const dbStart = Date.now()
-      
-      // Single optimized query with selective fields only
-      const cartItems = await prisma.cart.findMany({
-        where: ownerWhere,
-        select: {
-          cartId: true,
-          productId: true,
-          quantity: true,
-          product: {
-            select: {
-              productId: true,
-              productName: true,
-              productPrice: true,
-              productStock: true,
-              productImage: true
+      try {
+        let cart = []
+
+        if (isAuthenticated && userId) {
+          // Authenticated user - fetch by userId
+          console.log('👤 Fetching cart for authenticated user:', userId)
+          cart = await prisma.cart.findMany({
+            where: { 
+              userId: parseInt(userId)
+            },
+            include: {
+              product: {
+                select: {
+                  productId: true,
+                  productName: true,
+                  productDescription: true,
+                  productPrice: true,
+                  productImage: true,
+                  productStock: true
+                }
+              }
             }
-          }
-        },
-        orderBy: { cartId: 'desc' } // Most recent first
-      })
-      
-      console.log(`💾 Cart query: ${Date.now() - dbStart}ms`)
-
-      // Calculate totals efficiently in memory
-      let grandTotal = 0
-      const items = cartItems.map(item => {
-        const itemTotal = item.product.productPrice * item.quantity
-        grandTotal += itemTotal
-        return {
-          cartId: item.cartId,
-          productId: item.productId,
-          quantity: item.quantity,
-          product: item.product,
-          itemTotal
+          })
+        } else {
+          // Guest user - fetch by sessionId
+          console.log('👻 Fetching cart for guest session:', sessionId)
+          cart = await prisma.cart.findMany({
+            where: { 
+              sessionId: sessionId,
+              userId: null
+            },
+            include: {
+              product: {
+                select: {
+                  productId: true,
+                  productName: true,
+                  productDescription: true,
+                  productPrice: true,
+                  productImage: true,
+                  productStock: true
+                }
+              }
+            }
+          })
         }
-      })
 
-      console.log(`✅ Cart GET total: ${Date.now() - startTime}ms`)
-      
-      // Cache for 30 seconds to reduce repeated calls
-      res.setHeader('Cache-Control', 'private, max-age=30')
-      
-      return res.status(200).json({ 
-        items, 
-        grandTotal,
-        itemCount: items.length 
-      })
+        console.log(`✅ Cart fetched: ${cart.length} items (${Date.now() - startTime}ms)`)
+
+        return res.status(200).json({
+          success: true,
+          cart: cart.map(item => ({
+            cartId: item.cartId,
+            productId: item.productId,
+            quantity: item.quantity,
+            product: item.product
+          }))
+        })
+
+      } catch (dbError) {
+        console.error('💥 Database error fetching cart:', dbError)
+        return res.status(500).json({ 
+          error: 'Failed to fetch cart',
+          details: process.env.NODE_ENV === 'development' ? dbError.message : undefined,
+          cart: []
+        })
+      }
     }
 
-    // ---------------- ADD TO CART (OPTIMIZED) ----------------
+    // ============== POST: Add to Cart ==============
     if (req.method === 'POST') {
       const { productId, quantity = 1 } = req.body
 
       if (!productId) {
-        return res.status(400).json({ error: 'productId required' })
+        return res.status(400).json({ error: 'Product ID is required' })
       }
 
-      const pId = parseInt(productId, 10)
-      const qty = Math.max(1, parseInt(quantity, 10))
-
-      const dbStart = Date.now()
-
-      // Single transaction with optimized queries
-      const result = await prisma.$transaction(async (tx) => {
-        // Check product with minimal fields
-        const product = await tx.products.findUnique({ 
-          where: { productId: pId },
-          select: { 
-            productId: true, 
-            productStock: true, 
-            productName: true, 
-            productPrice: true 
-          }
+      try {
+        // Check if product exists and has stock
+        const product = await prisma.products.findUnique({
+          where: { productId: parseInt(productId) },
+          select: { productId: true, productStock: true, productName: true }
         })
-        
+
         if (!product) {
-          throw { status: 404, message: 'Product not found' }
+          return res.status(404).json({ error: 'Product not found' })
         }
 
-        if (qty > product.productStock) {
-          throw { status: 400, message: `Only ${product.productStock} units available` }
+        if (product.productStock < quantity) {
+          return res.status(400).json({ 
+            error: `Insufficient stock. Only ${product.productStock} available.` 
+          })
         }
 
-        // Try to find existing cart item
-        const existing = await tx.cart.findFirst({
-          where: { 
-            productId: pId, 
-            ...ownerWhere
-          },
-          select: { cartId: true, quantity: true }
+        // Use upsert to handle the unique constraint properly
+        let cartItem
+
+        if (isAuthenticated && userId) {
+          // Authenticated user
+          console.log('➕ Adding to cart for user:', userId)
+          
+          // Check existing quantity
+          const existing = await prisma.cart.findUnique({
+            where: {
+              unique_user_cart_item: {
+                userId: parseInt(userId),
+                productId: parseInt(productId)
+              }
+            }
+          })
+
+          const newQuantity = existing ? existing.quantity + quantity : quantity
+
+          if (newQuantity > product.productStock) {
+            return res.status(400).json({ 
+              error: `Cannot add more. Maximum available: ${product.productStock}` 
+            })
+          }
+
+          cartItem = await prisma.cart.upsert({
+            where: {
+              unique_user_cart_item: {
+                userId: parseInt(userId),
+                productId: parseInt(productId)
+              }
+            },
+            create: {
+              userId: parseInt(userId),
+              productId: parseInt(productId),
+              quantity: parseInt(quantity),
+              sessionId: sessionId
+            },
+            update: {
+              quantity: newQuantity
+            },
+            include: {
+              product: {
+                select: {
+                  productId: true,
+                  productName: true,
+                  productDescription: true,
+                  productPrice: true,
+                  productImage: true,
+                  productStock: true
+                }
+              }
+            }
+          })
+        } else {
+          // Guest user
+          console.log('➕ Adding to cart for guest:', sessionId)
+          
+          // Check existing quantity
+          const existing = await prisma.cart.findUnique({
+            where: {
+              unique_guest_cart_item: {
+                sessionId: sessionId,
+                productId: parseInt(productId)
+              }
+            }
+          })
+
+          const newQuantity = existing ? existing.quantity + quantity : quantity
+
+          if (newQuantity > product.productStock) {
+            return res.status(400).json({ 
+              error: `Cannot add more. Maximum available: ${product.productStock}` 
+            })
+          }
+
+          cartItem = await prisma.cart.upsert({
+            where: {
+              unique_guest_cart_item: {
+                sessionId: sessionId,
+                productId: parseInt(productId)
+              }
+            },
+            create: {
+              sessionId: sessionId,
+              productId: parseInt(productId),
+              quantity: parseInt(quantity),
+              userId: null
+            },
+            update: {
+              quantity: newQuantity
+            },
+            include: {
+              product: {
+                select: {
+                  productId: true,
+                  productName: true,
+                  productDescription: true,
+                  productPrice: true,
+                  productImage: true,
+                  productStock: true
+                }
+              }
+            }
+          })
+        }
+
+        console.log(`✅ Cart item saved: ${cartItem.cartId}`)
+
+        return res.status(200).json({
+          success: true,
+          message: 'Cart updated',
+          cartItem: {
+            cartId: cartItem.cartId,
+            productId: cartItem.productId,
+            quantity: cartItem.quantity,
+            product: cartItem.product
+          }
         })
 
-        if (existing) {
-          // Update existing quantity
-          const newQuantity = existing.quantity + qty
-          
-          if (newQuantity > product.productStock) {
-            throw { status: 400, message: `Cannot add ${qty} more. Maximum ${product.productStock} allowed` }
-          }
-          
-          const updated = await tx.cart.update({
-            where: { cartId: existing.cartId },
-            data: { quantity: newQuantity },
-            select: {
-              cartId: true,
-              productId: true,
-              quantity: true,
-              product: {
-                select: {
-                  productName: true,
-                  productPrice: true,
-                  productImage: true
-                }
-              }
-            }
+      } catch (dbError) {
+        console.error('💥 Database error adding to cart:', dbError)
+        
+        // Handle unique constraint violation
+        if (dbError.code === 'P2002') {
+          return res.status(409).json({ 
+            error: 'Item already in cart. Please refresh and try again.' 
           })
-          
-          return { action: 'updated', item: updated }
-        } else {
-          // Create new cart item
-          const created = await tx.cart.create({
-            data: {
-              productId: pId,
-              quantity: qty,
-              ...ownerWhere
-            },
-            select: {
-              cartId: true,
-              productId: true,
-              quantity: true,
-              product: {
-                select: {
-                  productName: true,
-                  productPrice: true,
-                  productImage: true
-                }
-              }
-            }
-          })
-          
-          return { action: 'created', item: created }
         }
-      })
+        
+        return res.status(500).json({ 
+          error: 'Failed to add to cart',
+          details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+        })
+      }
+    }
 
-      console.log(`💾 Cart POST: ${Date.now() - dbStart}ms`)
-      console.log(`✅ Cart POST total: ${Date.now() - startTime}ms`)
+    // ============== DELETE: Clear Cart ==============
+    if (req.method === 'DELETE') {
+      try {
+        const whereClause = isAuthenticated && userId
+          ? { userId: parseInt(userId) }
+          : { sessionId: sessionId, userId: null }
 
-      // Add item total to response
-      result.item.itemTotal = result.item.product.productPrice * result.item.quantity
-      
-      return res.status(result.action === 'created' ? 201 : 200).json(result)
+        const result = await prisma.cart.deleteMany({
+          where: whereClause
+        })
+
+        console.log(`✅ Cart cleared: ${result.count} items removed`)
+
+        return res.status(200).json({
+          success: true,
+          message: 'Cart cleared',
+          deletedCount: result.count
+        })
+
+      } catch (dbError) {
+        console.error('💥 Database error clearing cart:', dbError)
+        return res.status(500).json({ 
+          error: 'Failed to clear cart',
+          details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+        })
+      }
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
 
-  }  catch (err) {
-    console.error("❌ Cart API Error:", err)
-    console.log(`💥 Cart API failed: ${Date.now() - startTime}ms`)
-    
-    if (err?.status) {
-      return res.status(err.status).json({ error: err.message })
-    }
-    return res.status(500).json({ error: 'Internal server error' })
+  } catch (error) {
+    console.error('💥 Cart API Error:', error)
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      cart: []
+    })
   }
-  // REMOVED: Don't disconnect Prisma - let connection pool handle it
 }

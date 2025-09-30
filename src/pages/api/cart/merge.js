@@ -1,4 +1,4 @@
-// src/pages/api/cart/merge.js - Ultra-optimized version
+// src/pages/api/cart/merge.js - Fixed version (no disconnect)
 import { getContext } from '@/lib/getContext'
 import prisma from '@/lib/prisma'
 
@@ -8,12 +8,12 @@ export default async function handler(req, res) {
   }
   
   const startTime = Date.now()
-  console.log('🔄 Cart Merge: Starting optimized merge process...')
+  console.log('🔄 Cart Merge: Starting merge process...')
   
   try {
     // Get context
     const contextStart = Date.now()
-    const { userId, sessionId, isAuthenticated, user } = await getContext(req, res)
+    const { userId, sessionId, isAuthenticated } = await getContext(req, res)
     console.log(`⚡ Context: ${Date.now() - contextStart}ms`)
     
     // Validate requirements
@@ -36,7 +36,10 @@ export default async function handler(req, res) {
     const result = await prisma.$transaction(async (tx) => {
       // Get all guest cart items with product info in ONE query
       const guestItems = await tx.cart.findMany({ 
-        where: { sessionId },
+        where: { 
+          sessionId,
+          userId: null // Only get guest items
+        },
         select: {
           productId: true,
           quantity: true,
@@ -51,16 +54,17 @@ export default async function handler(req, res) {
       })
 
       if (guestItems.length === 0) {
+        console.log('ℹ️ No guest items to merge')
         return { action: 'skipped', itemsCount: 0 }
       }
 
-      console.log(`📦 Found ${guestItems.length} guest items`)
+      console.log(`📦 Found ${guestItems.length} guest items to merge`)
 
       // Get existing user cart items in ONE query
       const productIds = guestItems.map(item => item.productId)
       const existingUserItems = await tx.cart.findMany({
         where: { 
-          userId, 
+          userId: parseInt(userId), 
           productId: { in: productIds }
         },
         select: {
@@ -87,7 +91,7 @@ export default async function handler(req, res) {
         const maxStock = guestItem.product.productStock
         
         if (existing) {
-          // Update existing item
+          // Update existing item - merge quantities
           const newQuantity = Math.min(
             existing.quantity + guestItem.quantity,
             maxStock
@@ -99,20 +103,21 @@ export default async function handler(req, res) {
           })
           
           if (newQuantity < existing.quantity + guestItem.quantity) {
-            warnings.push(`Limited ${guestItem.product.productName} to ${newQuantity} (max stock)`)
+            warnings.push(`Limited ${guestItem.product.productName} to ${newQuantity} (max stock: ${maxStock})`)
           }
         } else {
-          // Create new item
+          // Create new item for user
           const finalQuantity = Math.min(guestItem.quantity, maxStock)
           
           createOperations.push({
-            userId,
+            userId: parseInt(userId),
             productId: guestItem.productId,
-            quantity: finalQuantity
+            quantity: finalQuantity,
+            sessionId: sessionId // Keep sessionId for reference
           })
           
           if (finalQuantity < guestItem.quantity) {
-            warnings.push(`Limited ${guestItem.product.productName} to ${finalQuantity} (max stock)`)
+            warnings.push(`Limited ${guestItem.product.productName} to ${finalQuantity} (max stock: ${maxStock})`)
           }
         }
         mergedCount++
@@ -121,23 +126,25 @@ export default async function handler(req, res) {
       // BULK OPERATIONS - Much faster than individual queries
       if (updateOperations.length > 0) {
         await Promise.all(
-          updateOperations.map(op => 
-            tx.cart.update(op)
-          )
+          updateOperations.map(op => tx.cart.update(op))
         )
-        console.log(`🔄 Bulk updated ${updateOperations.length} items`)
+        console.log(`🔄 Updated ${updateOperations.length} existing items`)
       }
 
       if (createOperations.length > 0) {
         await tx.cart.createMany({
-          data: createOperations
+          data: createOperations,
+          skipDuplicates: true // Skip if somehow already exists
         })
-        console.log(`➕ Bulk created ${createOperations.length} items`)
+        console.log(`➕ Created ${createOperations.length} new items`)
       }
 
-      // Delete all guest items in one operation
+      // Delete all guest items (where userId is null and matches sessionId)
       const deleteResult = await tx.cart.deleteMany({ 
-        where: { sessionId } 
+        where: { 
+          sessionId,
+          userId: null
+        } 
       })
       console.log(`🗑️ Deleted ${deleteResult.count} guest items`)
 
@@ -149,16 +156,16 @@ export default async function handler(req, res) {
           created: createOperations.length,
           deletedGuestItems: deleteResult.count
         },
-        warnings
+        warnings: warnings.length > 0 ? warnings : undefined
       }
     })
 
     console.log(`💾 Database operations: ${Date.now() - dbStart}ms`)
-    console.log(`✅ Cart merge total: ${Date.now() - startTime}ms`)
+    console.log(`✅ Cart merge completed: ${Date.now() - startTime}ms`)
 
     return res.status(200).json(result)
 
-  }  catch (error) {
+  } catch (error) {
     console.error('💥 Cart merge error:', error)
     console.log(`❌ Cart merge failed: ${Date.now() - startTime}ms`)
     
@@ -166,8 +173,6 @@ export default async function handler(req, res) {
       error: 'Failed to merge cart',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     })
-  } finally {
-    await prisma.$disconnect()
   }
-
+  // REMOVED: await prisma.$disconnect() - This was causing the connection issues!
 }
