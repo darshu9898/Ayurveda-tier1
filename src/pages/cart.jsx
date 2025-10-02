@@ -18,7 +18,7 @@ export default function Cart() {
   
   // Use CartContext for all cart data - removed local state conflicts
   const { 
-    cartItems, 
+    cart: cartItems, 
     loading, 
     updateCartItem, 
     removeFromCart, 
@@ -64,37 +64,37 @@ export default function Cart() {
     }
   }, [cartItems]);
 
-  // Update quantity
-  const updateQuantity = async (productId, newQuantity) => {
+  // Update quantity - CHANGED: cartId instead of productId
+  const updateQuantity = async (cartId, newQuantity) => {
     if (newQuantity < 0) return;
     
-    setUpdating(prev => ({ ...prev, [productId]: true }));
+    setUpdating(prev => ({ ...prev, [cartId]: true }));
     
     try {
-      await updateCartItem(productId, newQuantity);
+      await updateCartItem(cartId, newQuantity);
     } catch (error) {
       console.error('Update quantity error:', error);
       alert('Failed to update quantity');
-      refreshCart(true); // Use context refresh instead
+      refreshCart(true);
     } finally {
-      setUpdating(prev => ({ ...prev, [productId]: false }));
+      setUpdating(prev => ({ ...prev, [cartId]: false }));
     }
   };
 
-  // Remove item
-  const removeItem = async (productId) => {
+  // Remove item - CHANGED: cartId instead of productId
+  const removeItem = async (cartId) => {
     if (!confirm('Remove this item from cart?')) return;
     
-    setUpdating(prev => ({ ...prev, [productId]: true }));
+    setUpdating(prev => ({ ...prev, [cartId]: true }));
     
     try {
-      await removeFromCart(productId);
+      await removeFromCart(cartId);
     } catch (error) {
       console.error('Remove item error:', error);
       alert('Failed to remove item');
-      refreshCart(true); // Use context refresh instead
+      refreshCart(true);
     } finally {
-      setUpdating(prev => ({ ...prev, [productId]: false }));
+      setUpdating(prev => ({ ...prev, [cartId]: false }));
     }
   };
 
@@ -125,17 +125,15 @@ export default function Cart() {
   const total = subtotal - discountAmount + shipping;
 
   const handleCheckout = () => {
+    console.log('Checkout clicked, user:', user);
     if (!user) {
-      router.push('/login');
+      console.log('No user, redirecting to login');
+      router.push('/login?redirect=/checkout');
       return;
     }
     
-    setIsCheckingOut(true);
-    // Navigate to checkout page (to be implemented later)
-    setTimeout(() => {
-      router.push('/checkout')
-      setIsCheckingOut(false);
-    }, 500);
+    console.log('User exists, going to checkout');
+    router.push('/checkout');
   };
 
   if (loading) {
@@ -242,18 +240,18 @@ export default function Cart() {
                         
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={() => updateQuantity(item.productId, item.quantity - 1)}
-                            disabled={updating[item.productId] || item.quantity <= 1}
+                            onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
+                            disabled={updating[item.cartId] || item.quantity <= 1}
                             className="w-8 cursor-pointer h-8 rounded-full bg-gray-600 text-white hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center font-bold"
                           >
                             −
                           </button>
                           <span className="w-8 text-center font-bold text-black">
-                            {updating[item.productId] ? '...' : item.quantity}
+                            {updating[item.cartId] ? '...' : item.quantity}
                           </span>
                           <button
-                            onClick={() => updateQuantity(item.productId, item.quantity + 1)}
-                            disabled={updating[item.productId]}
+                            onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
+                            disabled={updating[item.cartId]}
                             className="w-8 cursor-pointer h-8 rounded-full bg-gray-600 text-white hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center font-bold"
                           >
                             +
@@ -263,11 +261,11 @@ export default function Cart() {
                         <div className="text-right">
                           <p className="font-bold text-lg text-black">₹{item.itemTotal}</p>
                           <button
-                            onClick={() => removeItem(item.productId)}
-                            disabled={updating[item.productId]}
+                            onClick={() => removeItem(item.cartId)}
+                            disabled={updating[item.cartId]}
                             className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm mt-1"
                           >
-                            {updating[item.productId] ? 'Removing...' : 'Remove'}
+                            {updating[item.cartId] ? 'Removing...' : 'Remove'}
                           </button>
                         </div>
                       </div>

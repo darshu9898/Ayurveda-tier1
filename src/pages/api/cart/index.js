@@ -1,4 +1,4 @@
-// src/pages/api/cart/index.js (or cart.js) - Fixed for your schema
+// src/pages/api/cart/index.js - FIXED: Corrected unique constraint names
 import { getContext } from '@/lib/getContext'
 import prisma, { ensureConnected } from '@/lib/prisma'
 
@@ -16,6 +16,7 @@ export default async function handler(req, res) {
         cart: []
       })
     }
+    
     // Get context
     const context = await getContext(req, res)
     console.log('📦 Context received:', {
@@ -91,6 +92,7 @@ export default async function handler(req, res) {
             cartId: item.cartId,
             productId: item.productId,
             quantity: item.quantity,
+            itemTotal: item.quantity * item.product.productPrice,
             product: item.product
           }))
         })
@@ -130,17 +132,17 @@ export default async function handler(req, res) {
           })
         }
 
-        // Use upsert to handle the unique constraint properly
+        // Use upsert with CORRECT constraint names
         let cartItem
 
         if (isAuthenticated && userId) {
-          // Authenticated user
+          // Authenticated user - use userId_productId constraint
           console.log('➕ Adding to cart for user:', userId)
           
-          // Check existing quantity
+          // Check existing quantity using CORRECT constraint name
           const existing = await prisma.cart.findUnique({
             where: {
-              unique_user_cart_item: {
+              userId_productId: {  // ✅ CORRECTED: was unique_user_cart_item
                 userId: parseInt(userId),
                 productId: parseInt(productId)
               }
@@ -157,7 +159,7 @@ export default async function handler(req, res) {
 
           cartItem = await prisma.cart.upsert({
             where: {
-              unique_user_cart_item: {
+              userId_productId: {  // ✅ CORRECTED: was unique_user_cart_item
                 userId: parseInt(userId),
                 productId: parseInt(productId)
               }
@@ -185,13 +187,13 @@ export default async function handler(req, res) {
             }
           })
         } else {
-          // Guest user
+          // Guest user - use sessionId_productId constraint
           console.log('➕ Adding to cart for guest:', sessionId)
           
-          // Check existing quantity
+          // Check existing quantity using CORRECT constraint name
           const existing = await prisma.cart.findUnique({
             where: {
-              unique_guest_cart_item: {
+              sessionId_productId: {  // ✅ CORRECTED: was unique_guest_cart_item
                 sessionId: sessionId,
                 productId: parseInt(productId)
               }
@@ -208,7 +210,7 @@ export default async function handler(req, res) {
 
           cartItem = await prisma.cart.upsert({
             where: {
-              unique_guest_cart_item: {
+              sessionId_productId: {  // ✅ CORRECTED: was unique_guest_cart_item
                 sessionId: sessionId,
                 productId: parseInt(productId)
               }
