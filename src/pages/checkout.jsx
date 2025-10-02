@@ -53,35 +53,114 @@ export default function Checkout() {
   }, [isAuthenticated]);
 
   const fetchCart = async () => {
-    try {
-      const response = await fetch('/api/cart', {
-        credentials: 'include',
-        cache: 'no-cache'
-      });
+  try {
+    const response = await fetch('/api/cart', {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      setCartItems(data.cart || []); // CHANGED: data.cart instead of data.items
       
-      if (response.ok) {
-        const data = await response.json();
-        setCartItems(data.items || []);
-        
-        // Redirect to cart if empty
-        if (!data.items || data.items.length === 0) {
-          router.push('/cart');
-        }
-      } else {
-        console.error('Failed to fetch cart');
+      // Redirect to cart if empty
+      if (!data.cart || data.cart.length === 0) { // CHANGED: data.cart instead of data.items
         router.push('/cart');
       }
-    } catch (error) {
-      console.error('Cart fetch error:', error);
+    } else {
+      console.error('Failed to fetch cart');
       router.push('/cart');
     }
-  };
+  } catch (error) {
+    console.error('Cart fetch error:', error);
+    router.push('/cart');
+  }
+};
+
+
+//   const fetchCart = async () => {
+//   try {
+//     console.log('🛒 Fetching cart data...');
+//     const response = await fetch('/api/cart', {
+//       credentials: 'include',
+//       cache: 'no-store',
+//       headers: {
+//         'Cache-Control': 'no-cache',
+//         'Pragma': 'no-cache'
+//       }
+//     });
+    
+//     console.log('📦 Cart response status:', response.status);
+    
+//     if (response.ok) {
+//       const data = await response.json();
+//       console.log('✅ FULL API Response:', JSON.stringify(data, null, 2));
+//       console.log('📊 data.items:', data.items);
+//       console.log('📊 Array check:', Array.isArray(data.items));
+//       console.log('📊 Length:', data.items?.length);
+      
+//       setCartItems(data.items || []);
+      
+//       // Redirect to cart if empty
+//       if (!data.items || data.items.length === 0) {
+//         console.log('⚠️ Cart is empty - items:', data.items, 'length:', data.items?.length);
+//         console.log('⚠️ Redirecting to /cart');
+//         router.push('/cart');
+//       } else {
+//         console.log('✅ Cart has', data.items.length, 'items - staying on checkout');
+//       }
+//     } else {
+//       console.error('❌ Failed to fetch cart, status:', response.status);
+//       router.push('/cart');
+//     }
+//   } catch (error) {
+//     console.error('❌ Cart fetch error:', error);
+//     router.push('/cart');
+//   }
+// };
+  // const fetchCart = async () => {
+  //   try {
+  //     const response = await fetch('/api/cart', {
+  //       credentials: 'include',
+  //       cache: 'no-store',
+  //       headers: {
+  //       'Cache-Control': 'no-cache',
+  //       'Pragma': 'no-cache'
+  // }
+  //     });
+      
+  //     if (response.ok) {
+  //       const data = await response.json();
+  //       setCartItems(data.items || []);
+        
+  //       // Redirect to cart if empty
+  //       if (!data.items || data.items.length === 0) {
+  //         router.push('/cart');
+  //       }
+  //     } else {
+  //       console.error('Failed to fetch cart');
+  //       router.push('/cart');
+  //     }
+  //   } catch (error) {
+  //     console.error('Cart fetch error:', error);
+  //     router.push('/cart');
+  //   }
+  // };
 
   const fetchAddresses = async () => {
-    try {
-      const response = await fetch('/api/user/addresses', {
-        credentials: 'include'
-      });
+  try {
+    const response = await fetch('/api/user/addresses', {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    });
       
       if (response.ok) {
         const data = await response.json();
