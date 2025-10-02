@@ -1,3 +1,4 @@
+// src/pages/checkout.jsx
 import { ButtonDemo } from '@/components/Button';
 import RazorpayButton from '@/components/RazorpayButton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
