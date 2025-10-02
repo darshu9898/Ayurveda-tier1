@@ -632,111 +632,7 @@ export default function Checkout() {
                     </div>
                   )}
                 </CardContent>
-              </Card>
-
-              {/* Section 3: Payment Method */}
-              {/* <Card className="bg-white">
-                <CardHeader>
-                  <CardTitle className="text-xl text-black flex items-center gap-2">
-                    <span>💳</span> Payment Method
-                  </CardTitle>
-                  <CardDescription className="text-gray-700">
-                    Choose your preferred payment method
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3"> */}
-                    {/* Razorpay */}
-                    {/* <label className={`block p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                      paymentMethod === 'razorpay' ? 'border-[#2F674A] bg-green-50' : 'border-gray-200 hover:border-gray-300'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="payment"
-                        value="razorpay"
-                        checked={paymentMethod === 'razorpay'}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        className="sr-only"
-                      />
-                      <div className="flex items-center gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                          paymentMethod === 'razorpay' ? 'border-[#2F674A] bg-[#2F674A]' : 'border-gray-300'
-                        }`}>
-                          {paymentMethod === 'razorpay' && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                        </div>
-                        <div className="flex-grow">
-                          <h4 className="font-medium text-black">Credit/Debit Cards & UPI</h4>
-                          <p className="text-sm text-gray-600">Pay securely with cards, UPI, or net banking</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">💳 Cards</span>
-                            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded">📱 UPI</span>
-                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">🏦 Net Banking</span>
-                          </div>
-                        </div>
-                        <span className="text-2xl">🔒</span>
-                      </div>
-                    </label> */}
-
-                    {/* Cash on Delivery */}
-                    {/* <label className={`block p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                      paymentMethod === 'cod' ? 'border-[#2F674A] bg-green-50' : 'border-gray-200 hover:border-gray-300'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="payment"
-                        value="cod"
-                        checked={paymentMethod === 'cod'}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        className="sr-only"
-                      />
-                      <div className="flex items-center gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                          paymentMethod === 'cod' ? 'border-[#2F674A] bg-[#2F674A]' : 'border-gray-300'
-                        }`}>
-                          {paymentMethod === 'cod' && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                        </div>
-                        <div className="flex-grow">
-                          <h4 className="font-medium text-black">Cash on Delivery</h4>
-                          <p className="text-sm text-gray-600">Pay when your order is delivered</p>
-                          <p className="text-xs text-orange-600 mt-1">₹25 COD charges applicable</p>
-                        </div>
-                        <span className="text-2xl">💰</span>
-                      </div>
-                    </label> */}
-
-                    {/* Digital Wallets */}
-                    {/* <label className={`block p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                      paymentMethod === 'wallet' ? 'border-[#2F674A] bg-green-50' : 'border-gray-200 hover:border-gray-300'
-                    }`}>
-                      <input
-                        type="radio"
-                        name="payment"
-                        value="wallet"
-                        checked={paymentMethod === 'wallet'}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        className="sr-only"
-                      />
-                      <div className="flex items-center gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                          paymentMethod === 'wallet' ? 'border-[#2F674A] bg-[#2F674A]' : 'border-gray-300'
-                        }`}>
-                          {paymentMethod === 'wallet' && <div className="w-2 h-2 bg-white rounded-full"></div>}
-                        </div>
-                        <div className="flex-grow">
-                          <h4 className="font-medium text-black">Digital Wallets</h4>
-                          <p className="text-sm text-gray-600">PayTM, PhonePe, Google Pay, Amazon Pay</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">PayTM</span>
-                            <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">PhonePe</span>
-                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">GPay</span>
-                          </div>
-                        </div>
-                        <span className="text-2xl">📱</span>
-                      </div>
-                    </label>
-                  </div>
-                </CardContent>
-              </Card>*/}
+              </Card>              
             </div> 
 
             {/* Order Total Sidebar */}
@@ -792,7 +688,7 @@ export default function Checkout() {
                     <div className="pt-4">
                       {!currentOrder ? (
                         <ButtonDemo
-                          label={processing ? "Creating Order..." : "Create Order"}
+                          label={processing ? "Creating Order..." : "Continue to Payment"}
                           bgColor="green"
                           onClick={handlePlaceOrder}
                           disabled={processing || !selectedAddressId}
@@ -814,7 +710,7 @@ export default function Checkout() {
                           onFailure={handlePaymentFailure}
                           disabled={processing}
                         >
-                          {processing ? "Processing Payment..." : `Pay ₹${Math.round(finalTotal)}`}
+                          {`Complete Payment - ₹${Math.round(finalTotal)}`}
                         </RazorpayButton>
                       ) : (
                         <div className="text-center">
